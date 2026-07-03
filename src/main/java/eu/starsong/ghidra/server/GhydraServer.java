@@ -93,8 +93,18 @@ public class GhydraServer {
      */
     public void stop() {
         if (app != null) {
-            app.stop();
-            Msg.info(this, "GhydraMCP HTTP server stopped on port " + port);
+            Javalin toStop = app;
+            app = null;
+            try {
+                toStop.stop();
+                Msg.info(this, "GhydraMCP HTTP server stopped on port " + port);
+            } catch (Throwable t) {
+                // Ghidra's extension classloader can be torn down while Jetty is still
+                // stopping inner classes (ManagedSelector$CloseConnections, etc.).
+                // Swallow so plugin dispose / Ghidra quit does not wedge the UI.
+                Msg.warn(this, "GhydraMCP HTTP server stop on port " + port + " hit a classloader issue (harmless on quit): "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
         }
     }
 

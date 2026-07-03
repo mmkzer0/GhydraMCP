@@ -14,7 +14,9 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.Program;
+import ghidra.program.model.listing.Variable;
 import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.HighFunctionDBUtil;
 import ghidra.program.model.pcode.HighSymbol;
@@ -296,26 +298,19 @@ public class FunctionService {
      */
     public boolean updateLocalVariable(Program program, Function function, String variableName,
                                        String newName, String newDataTypeName) throws Exception {
+        return updateLocalVariable(program, function, variableName, newName, newDataTypeName, null);
+    }
+
+    /**
+     * Update a local variable using the shared decompiler cache when provided.
+     */
+    public boolean updateLocalVariable(Program program, Function function, String variableName,
+                                       String newName, String newDataTypeName,
+                                       DecompilerService decompilerService) throws Exception {
         if (newName != null && newName.contains("::")) {
             throw new IllegalArgumentException(
                 "Local variable names cannot contain '::' (local variables are not namespaced)");
         }
-        DecompileResults decompResults;
-        DecompInterface decomp = new DecompInterface();
-        try {
-            decomp.openProgram(program);
-            decompResults = decomp.decompileFunction(function, 60, new ConsoleTaskMonitor());
-        } finally {
-            decomp.dispose();
-        }
-        if (decompResults == null || !decompResults.decompileCompleted()) {
-            throw new IllegalStateException("Decompilation failed for " + function.getName());
-        }
-        HighFunction highFunc = decompResults.getHighFunction();
-        if (highFunc == null) {
-            throw new IllegalStateException("No high function available");
-        }
-
         ghidra.program.model.data.DataType resolvedType = null;
         if (newDataTypeName != null && !newDataTypeName.isEmpty()) {
             resolvedType = GhidraUtil.resolveDataType(program, newDataTypeName);
@@ -325,9 +320,56 @@ public class FunctionService {
         }
         final ghidra.program.model.data.DataType finalType = resolvedType;
 
-        return TransactionHelper.executeInTransaction(program,
+        // DB stack locals (local_10, etc.) often use different names in the decompiler
+        // symbol map (uVar1, lVar3). Try the committed listing first.
+        Boolean dbUpdated = TransactionHelper.executeInTransaction(program,
             "Update variable " + variableName + " in " + function.getName(), () -> {
-                for (var it = highFunc.getLocalSymbolMap().getSymbols(); it.hasNext(); ) {
+                for (Variable var : function.getAllVariables()) {
+                    if (var instanceof Parameter) {
+                        continue;
+                    }
+                    if (!var.getName().equals(variableName)) {
+                        continue;
+                    }
+                    if (newName != null && !newName.isEmpty()) {
+                        var.setName(newName, SourceType.USER_DEFINED);
+                    }
+                    if (finalType != null) {
+                        var.setDataType(finalType, SourceType.USER_DEFINED);
+                    }
+                    return true;
+                }
+                return false;
+            });
+        if (Boolean.TRUE.equals(dbUpdated)) {
+            return true;
+        }
+
+        HighFunction highFunc;
+        if (decompilerService != null) {
+            highFunc = decompilerService.getHighFunction(program, function, 60);
+        } else {
+            DecompInterface decomp = new DecompInterface();
+            DecompileResults decompResults;
+            try {
+                decomp.openProgram(program);
+                decompResults = decomp.decompileFunction(function, 60, new ConsoleTaskMonitor());
+            } finally {
+                decomp.dispose();
+            }
+            if (decompResults == null || !decompResults.decompileCompleted()) {
+                throw new IllegalStateException("Decompilation failed for " + function.getName());
+            }
+            highFunc = decompResults.getHighFunction();
+        }
+        if (highFunc == null) {
+            throw new IllegalStateException("Decompilation failed for " + function.getName());
+        }
+        final HighFunction finalHighFunc = highFunc;
+
+        Boolean updated = TransactionHelper.executeInTransaction(program,
+            "Update variable " + variableName + " in " + function.getName(), () -> {
+                for (var it = finalHighFunc.getLocalSymbolMap().getSymbols(); it.hasNext(); ) {
                     HighSymbol sym = it.next();
                     if (sym.getName().equals(variableName)) {
                         HighFunctionDBUtil.updateDBVariable(sym, newName, finalType, SourceType.USER_DEFINED);
@@ -336,6 +378,7 @@ public class FunctionService {
                 }
                 return false;
             });
+        return Boolean.TRUE.equals(updated);
     }
 
     // -------------------------------------------------------------------------

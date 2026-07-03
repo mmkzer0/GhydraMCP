@@ -278,79 +278,39 @@ def _discover_instances(client, config):
 
 
 def _discover_instances_on_host(host, port_range, config):
-    """Discover instances on specified host and port range."""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    """Discover instances via the plugin /instances API (single source of truth)."""
     from ..client import GhidraHTTPClient
 
-    found_instances = []
+    # Prefer base port; any live instance exposes the full activeInstances map.
+    probe_order = [8192] + [p for p in port_range if p != 8192]
 
-    def check_port(port):
-        """Check a single port for Ghidra instance."""
+    for port in probe_order:
         try:
-            # With parallel scanning, we can use a reasonable timeout
-            timeout = 0.5
-
-            # Try to connect
-            test_client = GhidraHTTPClient(
-                host=host,
-                port=port,
-                timeout=timeout
-            )
-
-            # Try to get plugin version
+            test_client = GhidraHTTPClient(host=host, port=port, timeout=0.5)
             version_data = test_client.get('plugin-version')
+            if not version_data.get("success"):
+                continue
 
-            if version_data.get("success"):
-                # Get program info
-                try:
-                    program_data = test_client.get('program')
-                    program_info = program_data.get("result", {})
+            version_info = version_data.get("result", {})
+            plugin_version = version_info.get("plugin_version", "unknown")
+            api_version = version_info.get("api_version", "unknown")
 
-                    # Parse program ID
-                    program_id = program_info.get("programId", ":")
-                    if ":" in program_id:
-                        project, path = program_id.split(":", 1)
-                    else:
-                        project = "unknown"
-                        path = ""
+            instances_resp = test_client.get('instances')
+            raw = instances_resp.get("result", [])
+            found_instances = []
+            for inst in raw:
+                found_instances.append({
+                    "port": inst.get("port", port),
+                    "url": inst.get("url", f"http://{host}:{inst.get('port', port)}"),
+                    "project": inst.get("project") or "-",
+                    "file": inst.get("file") or "-",
+                    "plugin_version": plugin_version,
+                    "api_version": api_version,
+                })
 
-                    return {
-                        "port": port,
-                        "url": f"http://{host}:{port}",
-                        "project": project,
-                        "file": program_info.get("name", path.lstrip("/")),
-                        "plugin_version": version_data.get("result", {}).get("plugin_version", "unknown"),
-                        "api_version": version_data.get("result", {}).get("api_version", "unknown")
-                    }
+            found_instances.sort(key=lambda x: x['port'])
+            return {"success": True, "instances": found_instances}
+        except Exception:
+            continue
 
-                except:
-                    # Program info failed, but plugin responded
-                    return {
-                        "port": port,
-                        "url": f"http://{host}:{port}",
-                        "project": "-",
-                        "file": "-",
-                        "plugin_version": version_data.get("result", {}).get("plugin_version", "unknown"),
-                        "api_version": version_data.get("result", {}).get("api_version", "unknown")
-                    }
-
-        except:
-            # Connection failed, skip this port
-            return None
-
-    # Use ThreadPoolExecutor for concurrent port scanning
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_port = {executor.submit(check_port, port): port for port in port_range}
-
-        for future in as_completed(future_to_port):
-            result = future.result()
-            if result:
-                found_instances.append(result)
-
-    # Sort by port for consistent output
-    found_instances.sort(key=lambda x: x['port'])
-
-    return {
-        "success": True,
-        "instances": found_instances
-    }
+    return {"success": True, "instances": []}

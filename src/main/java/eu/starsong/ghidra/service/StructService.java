@@ -17,7 +17,6 @@ import ghidra.program.model.listing.Program;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 
 public class StructService {
@@ -144,18 +143,13 @@ public class StructService {
                 if (replaced == null) {
                     throw new IllegalStateException("Failed to replace field at offset " + componentOffset);
                 }
-            } else {
-                if (hasNewName && !Objects.equals(updatedName, originalName)) {
-                    try {
-                        component.setFieldName(updatedName);
-                    } catch (Exception e) {
-                        // 11.x declares a checked DuplicateNameException here; 12.x dropped it.
-                        // Catching Exception compiles against both and a clash maps to 400.
-                        throw new IllegalArgumentException("Field name already exists or invalid: " + updatedName, e);
-                    }
-                }
-                if (hasNewComment) {
-                    component.setComment(updatedComment);
+            } else if (hasNewName || hasNewComment) {
+                // Avoid setFieldName: 12.0.x void vs 12.1.x DataTypeComponent return → NoSuchMethodError at runtime.
+                int length = originalType.getLength();
+                DataTypeComponent replaced = struct.replaceAtOffset(
+                    componentOffset, originalType, length, updatedName, updatedComment);
+                if (replaced == null) {
+                    throw new IllegalStateException("Failed to update field at offset " + componentOffset);
                 }
             }
             return StructDto.from(struct);

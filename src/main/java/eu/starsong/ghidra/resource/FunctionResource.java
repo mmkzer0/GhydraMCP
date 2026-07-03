@@ -204,9 +204,10 @@ public class FunctionResource implements Resource {
     }
 
     private void respondVariables(GhidraContext ctx, Function fn, String selfPath) {
-        // getFunctionVariables splits internally: DB reads on the EDT, decompiler off it.
-        // Do NOT wrap this call in runRead (it would drag the decompiler onto the EDT).
-        List<Map<String, Object>> vars = GhidraUtil.getFunctionVariables(fn);
+        var program = ctx.requireProgram();
+        ghidra.program.model.pcode.HighFunction highFunc =
+            decompilerService.getHighFunction(program, fn, 30);
+        List<Map<String, Object>> vars = GhidraUtil.getFunctionVariables(fn, highFunc);
         FunctionRef ref = GhidraSwing.runRead(() -> {
             return new FunctionRef(fn.getName(), fn.getEntryPoint().toString());
         });
@@ -235,7 +236,8 @@ public class FunctionResource implements Resource {
         }
         String newType = req.dataType != null ? req.dataType : req.data_type;
         try {
-            boolean ok = functionService.updateLocalVariable(program, fn, varName, req.name, newType);
+            boolean ok = functionService.updateLocalVariable(
+                program, fn, varName, req.name, newType, decompilerService);
             if (!ok) {
                 throw new NotFoundException("Variable not found: " + varName, "VARIABLE_NOT_FOUND");
             }

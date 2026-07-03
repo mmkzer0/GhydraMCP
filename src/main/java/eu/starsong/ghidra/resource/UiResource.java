@@ -6,6 +6,7 @@ import eu.starsong.ghidra.server.GhidraContext;
 import eu.starsong.ghidra.server.Resource;
 import eu.starsong.ghidra.util.GhidraSwing;
 import ghidra.app.services.CodeViewerService;
+import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.util.ProgramLocation;
 import io.javalin.Javalin;
 import io.javalin.http.Context;
@@ -28,7 +29,7 @@ public class UiResource implements Resource {
 
     private void currentAddress(GhidraContext ctx) {
         var program = ctx.requireProgram();
-        CodeViewerService cv = ctx.tool().getService(CodeViewerService.class);
+        CodeViewerService cv = codeViewer(ctx);
         ProgramLocation loc = cv != null ? cv.getCurrentLocation() : null;
         String address = loc != null
             ? loc.getAddress().toString()
@@ -44,7 +45,7 @@ public class UiResource implements Resource {
 
     private void currentFunction(GhidraContext ctx) {
         var program = ctx.requireProgram();
-        CodeViewerService cv = ctx.tool().getService(CodeViewerService.class);
+        CodeViewerService cv = codeViewer(ctx);
         ProgramLocation loc = cv != null ? cv.getCurrentLocation() : null;
         if (loc == null) {
             throw new eu.starsong.ghidra.server.GhydraServer.NotFoundException(
@@ -65,5 +66,10 @@ public class UiResource implements Resource {
             .link("program", "/program")
             .link("by_address", "/functions/{}", dto.address())
             .build());
+    }
+
+    private static CodeViewerService codeViewer(GhidraContext ctx) {
+        PluginTool tool = ctx.programTool();
+        return tool != null ? tool.getService(CodeViewerService.class) : null;
     }
 }

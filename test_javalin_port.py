@@ -21,7 +21,59 @@ import requests
 
 DEFAULT_PORT = int(os.getenv("GHYDRAMCP_TEST_PORT") or "8192")
 BASE = os.getenv("GHYDRAMCP_TEST_HOST") or "localhost"
+
+
+def _resolve_test_url():
+    """Pick a live instance; prefer one with a loaded program."""
+    explicit = os.getenv("GHYDRAMCP_TEST_PORT")
+    if explicit:
+        base = f"http://{BASE}:{explicit}"
+        try:
+            r = requests.get(f"{base}/info", timeout=2)
+            if r.status_code == 200:
+                return base
+        except requests.exceptions.RequestException:
+            pass
+
+    candidates = [8192]
+    try:
+        r = requests.get(f"http://{BASE}:8192/instances", timeout=2)
+        if r.status_code == 200:
+            for inst in r.json().get("result", []):
+                port = inst.get("port")
+                if port and port not in candidates:
+                    candidates.append(port)
+    except requests.exceptions.RequestException:
+        pass
+
+    with_program = None
+    fallback = None
+    for port in candidates:
+        base = f"http://{BASE}:{port}"
+        try:
+            r = requests.get(f"{base}/info", timeout=2)
+        except requests.exceptions.RequestException:
+            continue
+        if r.status_code != 200:
+            continue
+        fallback = base
+        try:
+            inst = requests.get(f"{base}/instances/{port}", timeout=2).json()
+            if inst.get("result", {}).get("file"):
+                with_program = base
+                break
+        except requests.exceptions.RequestException:
+            continue
+
+    return with_program or fallback or f"http://{BASE}:{DEFAULT_PORT}"
+
+
 URL = f"http://{BASE}:{DEFAULT_PORT}"
+
+
+def setUpModule():
+    global URL
+    URL = _resolve_test_url()
 
 
 def _as_json(r):
@@ -222,12 +274,27 @@ class JavalinPortTests(unittest.TestCase):
         for fn in funcs.get("result", []):
             vars_ = _as_json(requests.get(f"{URL}/functions/{fn['address']}/variables"))
             for v in vars_["result"]["variables"]:
-                if not v.get("isParameter"):
-                    func_addr = fn["address"]
-                    old_var_name = v["name"]
-                    break
+                if v.get("isParameter"):
+                    continue
+                # Prefer DB-backed locals; decompiler-only names can be ephemeral.
+                if v.get("source") != "database":
+                    continue
+                func_addr = fn["address"]
+                old_var_name = v["name"]
+                break
             if func_addr:
                 break
+        if not func_addr:
+            # Fall back to any non-parameter local if no DB locals in the first page.
+            for fn in funcs.get("result", []):
+                vars_ = _as_json(requests.get(f"{URL}/functions/{fn['address']}/variables"))
+                for v in vars_["result"]["variables"]:
+                    if not v.get("isParameter"):
+                        func_addr = fn["address"]
+                        old_var_name = v["name"]
+                        break
+                if func_addr:
+                    break
         if not func_addr:
             self.skipTest("No function with a non-parameter local found")
 

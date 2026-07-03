@@ -1,6 +1,6 @@
 package eu.starsong.ghidra.server;
 
-import ghidra.app.services.ProgramManager;
+import eu.starsong.ghidra.util.ProgramContextResolver;
 import ghidra.framework.model.Project;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.listing.Program;
@@ -146,17 +146,25 @@ public class GhidraContext {
     }
 
     /**
-     * Get the current program. Returns null if no program is loaded.
+     * Program open in this tool only. Use for instance metadata (/instances, /info).
+     */
+    public Program localProgram() {
+        return ProgramContextResolver.localProgram(tool);
+    }
+
+    /**
+     * Resolved program for analysis APIs — falls back to any open tool in the project.
      */
     public Program program() {
-        if (tool == null) {
-            return null;
-        }
-        ProgramManager pm = tool.getService(ProgramManager.class);
-        if (pm == null) {
-            return null;
-        }
-        return pm.getCurrentProgram();
+        return ProgramContextResolver.findOpenProgram(tool);
+    }
+
+    /**
+     * Tool that owns the resolved program, or the bound tool if none found.
+     */
+    public PluginTool programTool() {
+        PluginTool owner = ProgramContextResolver.findToolWithOpenProgram(tool);
+        return owner != null ? owner : tool;
     }
 
     /**

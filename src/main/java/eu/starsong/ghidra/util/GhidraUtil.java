@@ -27,9 +27,11 @@ import ghidra.util.task.TaskMonitor;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -333,6 +335,15 @@ public class GhidraUtil {
      * decompiler-generated locals (merged, de-duped by name).
      */
     public static List<Map<String, Object>> getFunctionVariables(Function function) {
+        return getFunctionVariables(function, null);
+    }
+
+    /**
+     * Same as {@link #getFunctionVariables(Function)} but merges symbols from a
+     * caller-supplied {@link HighFunction} (typically from the shared decompiler cache)
+     * instead of spinning up a fresh {@link DecompInterface}.
+     */
+    public static List<Map<String, Object>> getFunctionVariables(Function function, HighFunction highFunc) {
         if (function == null) return new ArrayList<>();
 
         // DB-backed reads (parameters, stored locals) walk live DB records: marshal onto
@@ -361,37 +372,19 @@ public class GhidraUtil {
             return dbVars;
         });
 
+        if (highFunc != null) {
+            mergeDecompilerVariables(variables, highFunc);
+            return variables;
+        }
+
         DecompInterface decompiler = new DecompInterface();
         try {
             decompiler.openProgram(function.getProgram());
             DecompileResults results = decompiler.decompileFunction(function, 30, TaskMonitor.DUMMY);
             if (results.decompileCompleted()) {
-                HighFunction highFunc = results.getHighFunction();
-                if (highFunc != null) {
-                    for (var iter = highFunc.getLocalSymbolMap().getSymbols(); iter.hasNext(); ) {
-                        ghidra.program.model.pcode.HighSymbol sym = iter.next();
-                        boolean alreadyAdded = false;
-                        for (Map<String, Object> v : variables) {
-                            if (v.get("name").equals(sym.getName())) {
-                                alreadyAdded = true;
-                                break;
-                            }
-                        }
-                        if (!alreadyAdded) {
-                            Map<String, Object> varInfo = new HashMap<>();
-                            varInfo.put("name", sym.getName());
-                            varInfo.put("type", sym.getDataType() != null
-                                ? sym.getDataType().getName() : "unknown");
-                            varInfo.put("isParameter", sym.isParameter());
-                            varInfo.put("storage", sym.getStorage() != null
-                                ? sym.getStorage().toString() : "unknown");
-                            varInfo.put("source", "decompiler");
-                            if (sym.getPCAddress() != null) {
-                                varInfo.put("pcAddress", sym.getPCAddress().toString());
-                            }
-                            variables.add(varInfo);
-                        }
-                    }
+                HighFunction decompiled = results.getHighFunction();
+                if (decompiled != null) {
+                    mergeDecompilerVariables(variables, decompiled);
                 }
             }
         } catch (Exception e) {
@@ -400,6 +393,32 @@ public class GhidraUtil {
             decompiler.dispose();
         }
         return variables;
+    }
+
+    private static void mergeDecompilerVariables(List<Map<String, Object>> variables, HighFunction highFunc) {
+        Set<String> existing = new HashSet<>();
+        for (Map<String, Object> v : variables) {
+            existing.add((String) v.get("name"));
+        }
+        for (var iter = highFunc.getLocalSymbolMap().getSymbols(); iter.hasNext(); ) {
+            ghidra.program.model.pcode.HighSymbol sym = iter.next();
+            if (existing.contains(sym.getName())) {
+                continue;
+            }
+            Map<String, Object> varInfo = new HashMap<>();
+            varInfo.put("name", sym.getName());
+            varInfo.put("type", sym.getDataType() != null
+                ? sym.getDataType().getName() : "unknown");
+            varInfo.put("isParameter", sym.isParameter());
+            varInfo.put("storage", sym.getStorage() != null
+                ? sym.getStorage().toString() : "unknown");
+            varInfo.put("source", "decompiler");
+            if (sym.getPCAddress() != null) {
+                varInfo.put("pcAddress", sym.getPCAddress().toString());
+            }
+            variables.add(varInfo);
+            existing.add(sym.getName());
+        }
     }
 
     /**

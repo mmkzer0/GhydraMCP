@@ -8,6 +8,7 @@ import eu.starsong.ghidra.server.GhidraContext;
 import eu.starsong.ghidra.server.Resource;
 import eu.starsong.ghidra.service.AnalysisService;
 import eu.starsong.ghidra.util.DataFlowUtil;
+import eu.starsong.ghidra.util.GhidraSwing;
 import eu.starsong.ghidra.util.GhidraUtil;
 import ghidra.app.plugin.core.analysis.AutoAnalysisManager;
 import ghidra.program.model.address.Address;
@@ -58,15 +59,19 @@ public class AnalysisResource implements Resource {
 
     private void run(GhidraContext ctx) {
         var program = ctx.requireProgram();
-        AutoAnalysisManager am = AutoAnalysisManager.getAnalysisManager(program);
-        if (am.isAnalyzing()) {
+        RunRequest req;
+        try { req = ctx.bodyAsClass(RunRequest.class); } catch (Exception e) { req = new RunRequest(); }
+        boolean background = req.background == null ? true : req.background;
+
+        boolean alreadyRunning = GhidraSwing.runRead(() ->
+            AutoAnalysisManager.getAnalysisManager(program).isAnalyzing());
+        if (alreadyRunning) {
             ctx.status(409);
             ctx.json(Response.error(ctx.ctx(), ctx.port(), "ANALYSIS_RUNNING", "Analysis is already running").build());
             return;
         }
-        RunRequest req;
-        try { req = ctx.bodyAsClass(RunRequest.class); } catch (Exception e) { req = new RunRequest(); }
-        boolean background = req.background == null ? true : req.background;
+
+        AutoAnalysisManager am = AutoAnalysisManager.getAnalysisManager(program);
         am.reAnalyzeAll(null);
         am.startAnalysis(TaskMonitor.DUMMY, background);
         ctx.json(Response.ok(ctx.ctx(), ctx.port(), Map.of(

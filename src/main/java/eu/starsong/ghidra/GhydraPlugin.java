@@ -3,6 +3,7 @@ package eu.starsong.ghidra;
 import eu.starsong.ghidra.api.ApiConstants;
 import eu.starsong.ghidra.resource.*;
 import eu.starsong.ghidra.server.GhydraServer;
+import eu.starsong.ghidra.util.ProgramContextResolver;
 import ghidra.app.plugin.PluginCategoryNames;
 import ghidra.app.services.ProgramManager;
 import ghidra.framework.main.ApplicationLevelPlugin;
@@ -157,8 +158,7 @@ public class GhydraPlugin extends Plugin implements ApplicationLevelPlugin {
         ghidra.framework.model.Project project = tool != null ? tool.getProject() : null;
         snapshot.put("project", project != null ? project.getName() : null);
 
-        ProgramManager pm = tool != null ? tool.getService(ProgramManager.class) : null;
-        ghidra.program.model.listing.Program current = pm != null ? pm.getCurrentProgram() : null;
+        ghidra.program.model.listing.Program current = ProgramContextResolver.localProgram(tool);
         if (current != null) {
             snapshot.put("file", current.getName());
             snapshot.put("executable", current.getExecutablePath());

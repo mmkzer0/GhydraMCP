@@ -46,7 +46,8 @@ public class RootResource implements Resource {
             .link("projects", "/projects")
             .link("programs", "/programs");
 
-        if (ctx.program() != null) {
+        var program = ctx.localProgram();
+        if (program != null) {
             response.link("program", "/program")
                 .link("functions", "/functions")
                 .link("symbols", "/symbols")
@@ -71,7 +72,7 @@ public class RootResource implements Resource {
         data.put("serverPort", ctx.port());
         data.put("instanceCount", ctx.activeInstances().size());
 
-        var program = ctx.program();
+        var program = ctx.localProgram();
         if (program != null) {
             data.put("file", program.getName());
             data.put("architecture", program.getLanguage().getLanguageID().getIdAsString());
